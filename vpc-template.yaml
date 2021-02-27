@@ -1,0 +1,213 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Template to create VPC with 3 public and 3 private subnets in 3 separate AZs with useful Security Groups.
+
+Parameters:
+  VpcName:
+    Type: String
+    Description: Name to identify resources of this VPC
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+
+  IGW:
+    Type: AWS::EC2::InternetGateway
+
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref IGW
+
+  PublicSubnet1A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: us-east-1a
+  PrivateSubnet1A:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: us-east-1a
+
+  PublicSubnet1B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: us-east-1b
+  PrivateSubnet1B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: us-east-1b
+
+  PublicSubnet1C:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.5.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: us-east-1c
+  PrivateSubnet1C:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.6.0/24
+      AvailabilityZone: us-east-1c
+
+  # route table for public subnets
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  # public route to internet gateway 
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IGW
+
+  # associates public route table to public subnets
+  PublicSubnet1ARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1A
+  PublicSubnet1BRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1B
+  PublicSubnet1CRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1C
+
+  ResourceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for VPC resources
+      VpcId: !Ref VPC
+  
+  ResourceSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ResourceSecurityGroup
+      IpProtocol: "6"
+      FromPort: 0
+      ToPort: 65535
+      DestinationSecurityGroupId: !Ref ResourceSecurityGroup
+
+  ResourceSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ResourceSecurityGroup
+      IpProtocol: "6"
+      FromPort: 0
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref ResourceSecurityGroup
+
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for SSH access from anywhere
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: "6"
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: "6"
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group to allow HTTP and HTTPS
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: "6"
+          FromPort: 80 
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "6"
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupIngress:
+        - IpProtocol: "6"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "6"
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+
+Outputs:
+  VPCId:
+    Value: !Ref VPC
+    Export:
+      Name: !Sub ${VpcName}-VPC
+
+  ResourceSG:
+    Value: !Ref ResourceSecurityGroup
+    Export:
+      Name: !Sub ${VpcName}-ResourceSG
+
+  SSHSG:
+    Value: !Ref SSHSecurityGroup
+    Export:
+      Name: !Sub ${VpcName}-SSHSG
+
+  WebSG:
+    Value: !Ref WebSecurityGroup
+    Export:
+      Name: !Sub ${VpcName}-WebSG
+
+  PublicSubnet1A:
+    Value: !Ref PublicSubnet1A
+    Export:
+      Name: !Sub ${VpcName}-public-subnet1a
+
+  PublicSubnet1B:
+    Value: !Ref PublicSubnet1B
+    Export:
+      Name: !Sub ${VpcName}-public-subnet1b
+
+  PublicSubnet1C:
+    Value: !Ref PublicSubnet1C
+    Export:
+      Name: !Sub ${VpcName}-public-subnet1c
+
+  PrivateSubnet1A:
+    Value: !Ref PrivateSubnet1A
+    Export:
+      Name: !Sub ${VpcName}-private-subnet1a
+
+  PrivateSubnet1B:
+    Value: !Ref PrivateSubnet1B
+    Export:
+      Name: !Sub ${VpcName}-private-subnet1b
+
+  PrivateSubnet1C:
+    Value: !Ref PrivateSubnet1C
+    Export:
+      Name: !Sub ${VpcName}-private-subnet1c
