@@ -1,0 +1,168 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Template to create an HTTP API webhook with SQS queue for consumers
+
+Parameters:
+  Name:
+    Type: String
+    Description: Name to identify resources of this Stack
+
+  Stage:
+    Type: String
+    Description: The stage
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+
+  Path:
+    Type: String
+    Description: Path of the webhook, must start with / and be a valid path.
+
+  Method:
+    Type: String
+    Description: The method to use for the webhook POST/PUT/GET/DELETE
+    AllowedValues:
+      - POST
+      - PUT
+      - GET
+      - DELETE
+
+  RetentionPeriod:
+    Type: Number
+    Default: 345600
+    MinValue: 60
+    MaxValue: 1209600
+    Description: Seconds to retain events in the SQS Queue
+
+Resources:
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${Name}-${Stage}-Queue
+      MessageRetentionPeriod: !Ref RetentionPeriod
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DLQueue.Arn
+        maxReceiveCount: 1
+
+  QueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt Queue.Arn
+  
+      Queues:
+        - !Ref Queue
+
+  DLQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${Name}-${Stage}-DLQueue
+      MessageRetentionPeriod: !Ref RetentionPeriod
+
+  EventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub ${Name}-${Stage}-Bus
+
+  Rule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub ${Name}-${Stage}-Rule
+      EventBusName: !Ref EventBus
+      EventPattern: {"source": ["webhook"], "detail-type": [!Ref Name]}
+      Targets:
+        - Arn: !GetAtt Queue.Arn
+          Id: !Sub ${Name}-SQS
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Ref Name
+      ProtocolType: HTTP
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref Stage
+      AutoDeploy: true
+
+  Deployment:
+    DependsOn: Route
+    Type: AWS::ApiGatewayV2::Deployment
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref ApiStage
+
+  Route:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: !Join [' ', [!Ref Method, !Ref Path ] ]
+      Target: !Join [ '/', ['integrations', !Ref Integration] ]
+    
+  Integration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationSubtype: EventBridge-PutEvents
+      CredentialsArn: !GetAtt IntegrationRole.Arn
+      RequestParameters:
+        Source: 'webhook'
+        DetailType: !Ref Name
+        Detail: $request.body
+        EventBusName: !Ref EventBus
+      PayloadFormatVersion: '1.0'
+      TimeoutInMillis: 10000
+
+  IntegrationRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - apigateway.amazonaws.com
+              Action:
+                - 'sts:AssumeRole'
+        Policies:
+          - PolicyName: !Sub ${Name}-${Stage}-IntegrationRole
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: events:*
+                  Resource: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/${Name}-${Stage}-Bus
+    
+  EventBridgeSQSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${Name}-${Stage}-EventBridgeSQSRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt Queue.Arn
