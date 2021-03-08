@@ -1,0 +1,98 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Template to deploy a highly available bastion EC2 instance.
+
+Parameters:
+  Name:
+    Type: String
+    Description: Name to identify resources of this Stack
+
+  VPC:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID to launch the bastion in
+  
+  Subnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet 1 for NLB
+
+  Subnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet 2 for NLB
+
+  AMI:
+    Type: AWS::EC2::Image::Id
+    Description: AMI to use for bastion instance
+
+  Key:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of SSH keypair for bastion instance
+
+Resources:
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${Name}-NLB
+      Type: network
+      Subnets:
+        - !Ref Subnet1
+        - !Ref Subnet2
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+      Port: 22
+      Protocol: TCP
+      LoadBalancerArn: !Ref LoadBalancer
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Port: 22
+      Protocol: TCP
+      TargetType: instance
+
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref AMI
+      InstanceType: t2.micro
+      KeyName: !Ref Key
+      AssociatePublicIpAddress: false
+      SecurityGroups:
+        - !GetAtt SecurityGroup.GroupId
+      
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      VPCZoneIdentifier:
+        - !Ref Subnet1
+        - !Ref Subnet2
+      DesiredCapacity: "1"
+      MaxSize: "1"
+      MinSize: "1"
+      TargetGroupARNs:
+        - !Ref TargetGroup
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows SSH in and out
+      GroupName: !Sub ${Name}-SSHSecurityGroup
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: 22
+          ToPort: 22
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: 22
+          ToPort: 22
