@@ -1,0 +1,165 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Template to create an HTTP API endpoint to put records into a Kinesis Datastream that logs into a bucket
+
+Parameters:
+  Name:
+    Type: String
+    Description: Name to identify resources of this Stack
+
+  Stage:
+    Type: String
+    Description: The stage
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+
+  Path:
+    Type: String
+    Description: Path of the endpoint, must start with / and be a valid path.
+
+  Shards:
+    Type: Number
+    Description: The number of shards for the Kinesis Datastream
+    MinValue: 1
+
+  RetentionHours:
+    Type: Number
+    Default: 24
+    MinValue: 1
+    MaxValue: 8760
+    Description: The number of hours for the data records that are stored in shards to remain accessible
+
+  DestinationBucket:
+    Type: String
+    Description: S3 Bucket ARN to delivery Kinesis records
+
+  DestinationPrefix:
+    Type: String
+    Description: Prefix to add to files sent to the S3 Bucket
+
+  ErrorPrefix:
+    Type: String
+    Description: Prefix to add to error files sent to the S3 Bucket
+
+Resources:
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Ref Name
+      ProtocolType: HTTP
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref Stage
+      AutoDeploy: true
+
+  Deployment:
+    DependsOn: Route
+    Type: AWS::ApiGatewayV2::Deployment
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref ApiStage
+
+  Route:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: !Join [' ', ['POST', !Ref Path ] ]
+      Target: !Join [ '/', ['integrations', !Ref Integration] ]
+    
+  Integration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationSubtype: Kinesis-PutRecord
+      CredentialsArn: !GetAtt IntegrationRole.Arn
+      RequestParameters:
+        StreamName: !Ref Stream
+        Data: $request.body.data
+        PartitionKey: $request.body.partitionKey
+      PayloadFormatVersion: '1.0'
+      TimeoutInMillis: 10000
+
+  IntegrationRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - apigateway.amazonaws.com
+              Action:
+                - 'sts:AssumeRole'
+        Policies:
+          - PolicyName: !Sub ${Name}-${Stage}-IntegrationRole
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action: kinesis:*
+                  Resource: !GetAtt Stream.Arn
+    
+  Stream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub ${Name}-${Stage}-Stream
+      ShardCount: !Ref Shards
+      RetentionPeriodHours: !Ref RetentionHours
+
+  DeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: !Sub ${Name}-${Stage}-DeliveryStream 
+      DeliveryStreamType: KinesisStreamAsSource
+      KinesisStreamSourceConfiguration:
+        KinesisStreamARN: !GetAtt Stream.Arn
+        RoleARN: !GetAtt DeliveryRole.Arn
+      ExtendedS3DestinationConfiguration:
+        BucketARN: !Ref DestinationBucket
+        RoleARN: !GetAtt DeliveryRole.Arn
+        ErrorOutputPrefix: !Ref ErrorPrefix
+        Prefix: !Ref DestinationPrefix
+
+  DeliveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - firehose.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${Name}-${Stage}-DeliveryRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:GetBucketLocation
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:ListBucketMultiplartUploads
+                  - s3:PutObject
+                Resource:
+                  - !Ref DestinationBucket
+                  - !Join ['/', [ !Ref DestinationBucket, '*'] ]
+              - Effect: Allow
+                Action:
+                  - kinesis:DescribeStream
+                  - kinesis:GetShardIterator
+                  - kinesis:GetRecords
+                  - kinesis:ListShards
+                Resource: !GetAtt Stream.Arn
