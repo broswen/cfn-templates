@@ -1,0 +1,34 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: Template to deploy an ECS Cluster and relevant infrastructure
+
+Parameters:
+  Name:
+    Type: String
+    Description: Name to identify resources of this Stack
+
+  ClusterName:
+    Type: String
+    Description: Name of the ECS Cluster
+
+  RepositoryName:
+    Type: String
+    Description: Name of the ECR Repo
+
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      CapacityProviders:
+        - FARGATE
+      ClusterName: !Ref ClusterName
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: DEFAULT
+
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      ImageTagMutability: IMMUTABLE
